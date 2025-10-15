@@ -95,6 +95,8 @@ class DatabaseManager:
         image_ids = list(image_ids)
         if not image_ids:
             raise ValueError("At least one image must be linked to the product")
+        if len(image_ids) > 10:
+            raise ValueError("Нельзя привязывать более 10 изображений к одному товару")
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT id, path FROM images WHERE id IN (%s)" % ",".join("?" for _ in image_ids),
@@ -103,7 +105,8 @@ class DatabaseManager:
         rows = cursor.fetchall()
         if len(rows) != len(image_ids):
             raise ValueError("One or more images do not exist")
-        photo_paths = [row["path"] for row in rows]
+        row_map = {row["id"]: row["path"] for row in rows}
+        photo_paths = [row_map[img_id] for img_id in image_ids]
         cursor.execute(
             """
             INSERT INTO products(name, description, date_added, purchase_price, sale_price, photo_paths)

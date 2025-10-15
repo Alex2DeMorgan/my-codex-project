@@ -189,7 +189,10 @@ class InventoryApp:
         header.grid(row=0, column=0, columnspan=2, sticky="w", pady=(4, 0))
         subtitle = ttk.Label(
             frame,
-            text="Соберите карточку товара из уже загруженных фотографий и подготовьте её к публикации.",
+            text=(
+                "Соберите карточку товара из уже загруженных фотографий и подготовьте её к публикации. "
+                "Можно прикрепить до 10 изображений, первое станет главным."
+            ),
             style="Subtitle.TLabel",
         )
         subtitle.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 18))
@@ -277,13 +280,22 @@ class InventoryApp:
         self.images_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.grid(row=0, column=1, sticky="ns")
 
+        helper_label = ttk.Label(
+            images_frame,
+            text="Выберите до 10 изображений. Первое выбранное фото будет главным в карточке товара.",
+            style="CardBody.TLabel",
+            wraplength=360,
+            justify="left",
+        )
+        helper_label.grid(row=1, column=0, sticky="w", pady=(12, 0))
+
         refresh_button = ttk.Button(
             images_frame,
             text="Обновить",
             style="Secondary.TButton",
             command=self._populate_images_tab,
         )
-        refresh_button.grid(row=1, column=0, sticky="e", pady=(12, 0))
+        refresh_button.grid(row=2, column=0, sticky="e", pady=(8, 0))
 
         frame.rowconfigure(2, weight=1)
 
@@ -442,17 +454,39 @@ class InventoryApp:
 
             image_label.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 20))
 
+            main_photo_badge = ttk.Label(card, text="Главное фото", style="CardBody.TLabel")
+            main_photo_badge.grid(row=3, column=0, sticky="n", padx=(0, 20), pady=(12, 0))
+
             title_label = ttk.Label(card, text=row["name"], style="CardTitle.TLabel")
             title_label.grid(row=0, column=1, sticky="w")
 
+            action_frame = ttk.Frame(card, style="SectionFrame.TFrame")
+            action_frame.grid(row=0, column=2, rowspan=4, sticky="ne")
+
             delete_button = ttk.Button(
-                card,
+                action_frame,
                 text="✕",
                 width=3,
                 style="Icon.TButton",
                 command=lambda pid=row["id"], name=row["name"]: self._confirm_delete_product(pid, name),
             )
-            delete_button.grid(row=0, column=2, sticky="ne")
+            delete_button.grid(row=0, column=0, sticky="ne")
+
+            edit_button = ttk.Button(
+                action_frame,
+                text="Изменить товар",
+                style="Secondary.TButton",
+                command=lambda product=row: self._open_edit_product_dialog(product),
+            )
+            edit_button.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+
+            realization_button = ttk.Button(
+                action_frame,
+                text="Реализация",
+                style="Secondary.TButton",
+                command=lambda product=row: self._open_realization_stub(product),
+            )
+            realization_button.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
             description = row["description"] or "Описание не указано"
             description_label = ttk.Label(card, text=description, style="CardBody.TLabel")
@@ -466,6 +500,14 @@ class InventoryApp:
                 style="CardBody.TLabel",
             )
             price_label.grid(row=2, column=1, sticky="w", pady=(8, 0))
+
+            total_photos = len(row.get("photo_paths", []) or [])
+            photos_label = ttk.Label(
+                card,
+                text=f"Фотографии: {total_photos} шт. Первое фото отображается как главное.",
+                style="CardBody.TLabel",
+            )
+            photos_label.grid(row=3, column=1, sticky="w", pady=(8, 0))
 
     def _create_product(self) -> None:
         name = self.name_entry.get().strip()
@@ -495,6 +537,9 @@ class InventoryApp:
             return
         if not selected_items:
             messagebox.showwarning("Внимание", "Выберите хотя бы одно изображение")
+            return
+        if len(selected_items) > 10:
+            messagebox.showwarning("Внимание", "Можно выбрать не более 10 изображений для одного товара")
             return
 
         try:
@@ -545,6 +590,23 @@ class InventoryApp:
         messagebox.showinfo("Готово", "Товар удалён")
         self._populate_images_tab()
         self._populate_created_products()
+
+    def _open_edit_product_dialog(self, product_row) -> None:
+        product_name = product_row.get("name", "Товар")
+        messagebox.showinfo(
+            "Изменение товара",
+            (
+                "Функция редактирования находится в разработке. "
+                f"Скоро вы сможете обновлять информацию для \"{product_name}\"."
+            ),
+        )
+
+    def _open_realization_stub(self, product_row) -> None:
+        product_name = product_row.get("name", "Товар")
+        messagebox.showinfo(
+            "Реализация",
+            f"Подготовка реализации для \"{product_name}\" скоро будет доступна.",
+        )
 
     def _format_price_value(self, value: Optional[float]) -> str:
         if value in (None, ""):

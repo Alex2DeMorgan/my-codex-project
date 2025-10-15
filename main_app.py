@@ -219,7 +219,7 @@ class InventoryApp:
         images_frame.rowconfigure(0, weight=1)
         images_frame.columnconfigure(0, weight=1)
 
-        columns = ("path", "categories", "assigned")
+        columns = ("photo", "categories", "assigned", "path_value")
         self.images_tree = ttk.Treeview(
             images_frame,
             columns=columns,
@@ -227,12 +227,14 @@ class InventoryApp:
             selectmode="extended",
             padding=4,
         )
-        self.images_tree.heading("path", text="Путь")
+        self.images_tree.heading("photo", text="Фото товара")
         self.images_tree.heading("categories", text="Категории")
         self.images_tree.heading("assigned", text="Привязка")
-        self.images_tree.column("path", width=300)
+        self.images_tree.heading("path_value", text="")
+        self.images_tree.column("photo", width=300, anchor="w")
         self.images_tree.column("categories", width=160)
         self.images_tree.column("assigned", width=100)
+        self.images_tree.column("path_value", width=0, stretch=False)
         self.images_tree.grid(row=0, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(images_frame, orient=tk.VERTICAL, command=self.images_tree.yview)
@@ -341,7 +343,13 @@ class InventoryApp:
         for _, row in images_df.iterrows():
             categories = ", ".join(json.loads(row["categories"])) if row["categories"] else ""
             assigned = "Да" if row["product_id"] else "Нет"
-            self.images_tree.insert("", tk.END, iid=str(row["id"]), values=(row["path"], categories, assigned))
+            display_name = os.path.basename(row["path"]) if row["path"] else ""
+            self.images_tree.insert(
+                "",
+                tk.END,
+                iid=str(row["id"]),
+                values=(display_name, categories, assigned, row["path"]),
+            )
 
     def _resize_product_cards(self, event: tk.Event) -> None:
         self.products_canvas.itemconfigure(self.products_window, width=event.width)
@@ -420,7 +428,7 @@ class InventoryApp:
                 "id": product_id,
                 "name": name,
                 "description": description,
-                "images": [self.images_tree.set(item, "path") for item in selected_items],
+                "images": [self.images_tree.set(item, "path_value") for item in selected_items],
             }
             status = self.publisher.prepare_listing(product_info)
             messagebox.showinfo("Готово", f"Товар создан (ID: {product_id}).\n{status}")

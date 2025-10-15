@@ -2,7 +2,7 @@ import json
 import os
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pyautogui
 
@@ -81,10 +81,16 @@ class InventoryApp:
         style.configure("Primary.TButton", font=("Segoe UI Semibold", 11), padding=(14, 8))
         style.configure("Secondary.TButton", font=("Segoe UI", 11), padding=(12, 6))
         style.configure("Accent.TButton", font=("Segoe UI Semibold", 11), padding=(14, 8))
+        style.configure("Icon.TButton", font=("Segoe UI", 11), padding=(4, 2))
         style.map(
             "Accent.TButton",
             background=[("!disabled", accent), ("pressed", "#1d4ed8")],
             foreground=[("!disabled", "white")],
+        )
+        style.map(
+            "Icon.TButton",
+            background=[("pressed", "#fee2e2"), ("active", "#fee2e2")],
+            foreground=[("!disabled", "#dc2626")],
         )
 
         style.configure("PageTitle.TLabel", font=("Segoe UI Semibold", 20), foreground=text_primary, background=base_bg)
@@ -214,8 +220,16 @@ class InventoryApp:
             highlightcolor="#2563eb",
         )
 
+        ttk.Label(input_frame, text="Цена закупки", font=("Segoe UI", 11)).grid(row=4, column=0, sticky="w")
+        self.purchase_price_entry = ttk.Entry(input_frame, font=("Segoe UI", 11))
+        self.purchase_price_entry.grid(row=5, column=0, sticky="ew", pady=(4, 12))
+
+        ttk.Label(input_frame, text="Цена продажи", font=("Segoe UI", 11)).grid(row=6, column=0, sticky="w")
+        self.sale_price_entry = ttk.Entry(input_frame, font=("Segoe UI", 11))
+        self.sale_price_entry.grid(row=7, column=0, sticky="ew", pady=(4, 16))
+
         button_container = ttk.Frame(input_frame, style="SectionFrame.TFrame")
-        button_container.grid(row=4, column=0, sticky="ew")
+        button_container.grid(row=8, column=0, sticky="ew")
         button_container.columnconfigure(0, weight=1)
 
         auto_button = ttk.Button(
@@ -397,6 +411,7 @@ class InventoryApp:
             card = ttk.Frame(self.products_inner, style="Card.TFrame", padding=(20, 16))
             card.grid(row=index, column=0, sticky="ew", padx=16, pady=(0 if index == 0 else 12))
             card.columnconfigure(1, weight=1)
+            card.columnconfigure(2, weight=0)
 
             first_image_path = None
             photo_paths = row.get("photo_paths", [])
@@ -425,19 +440,55 @@ class InventoryApp:
                     width=18,
                 )
 
-            image_label.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 20))
+            image_label.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 20))
 
             title_label = ttk.Label(card, text=row["name"], style="CardTitle.TLabel")
             title_label.grid(row=0, column=1, sticky="w")
+
+            delete_button = ttk.Button(
+                card,
+                text="✕",
+                width=3,
+                style="Icon.TButton",
+                command=lambda pid=row["id"], name=row["name"]: self._confirm_delete_product(pid, name),
+            )
+            delete_button.grid(row=0, column=2, sticky="ne")
 
             description = row["description"] or "Описание не указано"
             description_label = ttk.Label(card, text=description, style="CardBody.TLabel")
             description_label.grid(row=1, column=1, sticky="ew", pady=(8, 0))
 
+            purchase_price_text = self._format_price_value(row.get("purchase_price"))
+            sale_price_text = self._format_price_value(row.get("sale_price"))
+            price_label = ttk.Label(
+                card,
+                text=f"Закупка: {purchase_price_text}   Продажа: {sale_price_text}",
+                style="CardBody.TLabel",
+            )
+            price_label.grid(row=2, column=1, sticky="w", pady=(8, 0))
+
     def _create_product(self) -> None:
         name = self.name_entry.get().strip()
         description = self.description_text.get("1.0", tk.END).strip()
         selected_items = self.images_tree.selection()
+        purchase_raw = self.purchase_price_entry.get().strip()
+        sale_raw = self.sale_price_entry.get().strip()
+
+        purchase_price = None
+        if purchase_raw:
+            try:
+                purchase_price = float(purchase_raw.replace(",", "."))
+            except ValueError:
+                messagebox.showerror("Ошибка", "Некорректное значение в поле 'Цена закупки'")
+                return
+
+        sale_price = None
+        if sale_raw:
+            try:
+                sale_price = float(sale_raw.replace(",", "."))
+            except ValueError:
+                messagebox.showerror("Ошибка", "Некорректное значение в поле 'Цена продажи'")
+                return
 
         if not name:
             messagebox.showwarning("Внимание", "Введите название товара")
@@ -447,7 +498,13 @@ class InventoryApp:
             return
 
         try:
-            product_id = self.db.create_product(name, description, [int(item) for item in selected_items])
+            product_id = self.db.create_product(
+                name,
+                description,
+                [int(item) for item in selected_items],
+                purchase_price=purchase_price,
+                sale_price=sale_price,
+            )
             product_info = {
                 "id": product_id,
                 "name": name,
@@ -462,6 +519,8 @@ class InventoryApp:
 
         self.name_entry.delete(0, tk.END)
         self.description_text.delete("1.0", tk.END)
+        self.purchase_price_entry.delete(0, tk.END)
+        self.sale_price_entry.delete(0, tk.END)
         self._populate_images_tab()
         self._populate_created_products()
 
@@ -470,6 +529,31 @@ class InventoryApp:
             "Скоро появится",
             "Функция автоматического заполнения находится в разработке.",
         )
+
+    def _confirm_delete_product(self, product_id: int, name: str) -> None:
+        if not messagebox.askyesno(
+            "Удаление товара",
+            f"Вы действительно хотите удалить \"{name}\"?",
+        ):
+            return
+        try:
+            self.db.delete_product(product_id)
+        except Exception as exc:  # pragma: no cover - GUI feedback
+            messagebox.showerror("Ошибка", str(exc))
+            return
+
+        messagebox.showinfo("Готово", "Товар удалён")
+        self._populate_images_tab()
+        self._populate_created_products()
+
+    def _format_price_value(self, value: Optional[float]) -> str:
+        if value in (None, ""):
+            return "—"
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return "—"
+        return f"{numeric:.2f} ₽"
 
     def _create_placeholder_thumbnail(self, size: int = 120) -> tk.PhotoImage:
         placeholder = tk.PhotoImage(width=size, height=size)

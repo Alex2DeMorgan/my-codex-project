@@ -26,9 +26,11 @@ class DatabaseManager:
                 name TEXT NOT NULL,
                 description TEXT,
                 date_added TEXT NOT NULL,
+                purchase_price REAL,
+                sale_price REAL,
                 photo_paths TEXT NOT NULL
             )
-            """
+        """
         )
         cursor.execute(
             """
@@ -42,6 +44,13 @@ class DatabaseManager:
             )
             """
         )
+        # Ensure columns exist for legacy databases
+        cursor.execute("PRAGMA table_info(products)")
+        existing_columns = {row["name"] for row in cursor.fetchall()}
+        if "purchase_price" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN purchase_price REAL")
+        if "sale_price" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN sale_price REAL")
         self.conn.commit()
 
     def add_image(self, path: str, uploaded_at: Optional[str] = None, *, categories: Optional[List[str]] = None) -> int:
@@ -79,6 +88,8 @@ class DatabaseManager:
         image_ids: Iterable[int],
         *,
         date_added: Optional[str] = None,
+        purchase_price: Optional[float] = None,
+        sale_price: Optional[float] = None,
     ) -> int:
         date_added = date_added or datetime.utcnow().isoformat()
         image_ids = list(image_ids)
@@ -94,8 +105,11 @@ class DatabaseManager:
             raise ValueError("One or more images do not exist")
         photo_paths = [row["path"] for row in rows]
         cursor.execute(
-            "INSERT INTO products(name, description, date_added, photo_paths) VALUES (?, ?, ?, ?)",
-            (name, description, date_added, json.dumps(photo_paths)),
+            """
+            INSERT INTO products(name, description, date_added, purchase_price, sale_price, photo_paths)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (name, description, date_added, purchase_price, sale_price, json.dumps(photo_paths)),
         )
         product_id = int(cursor.lastrowid)
         cursor.execute(
@@ -107,13 +121,38 @@ class DatabaseManager:
 
     def get_products(self) -> pd.DataFrame:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT id, name, description, date_added, photo_paths FROM products ORDER BY date_added DESC")
+        cursor.execute(
+            """
+            SELECT id, name, description, date_added, purchase_price, sale_price, photo_paths
+            FROM products
+            ORDER BY date_added DESC
+            """
+        )
         rows = cursor.fetchall()
         if not rows:
-            return pd.DataFrame(columns=["id", "name", "description", "date_added", "photo_paths"])
+            return pd.DataFrame(
+                columns=[
+                    "id",
+                    "name",
+                    "description",
+                    "date_added",
+                    "purchase_price",
+                    "sale_price",
+                    "photo_paths",
+                ]
+            )
         frame = pd.DataFrame(rows, columns=rows[0].keys())
         frame["photo_paths"] = frame["photo_paths"].apply(lambda value: json.loads(value) if value else [])
+        for column in ("purchase_price", "sale_price"):
+            if column in frame.columns:
+                frame[column] = frame[column].where(frame[column].notna(), None)
         return frame
+
+    def delete_product(self, product_id: int) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE images SET product_id = NULL WHERE product_id = ?", (product_id,))
+        cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()

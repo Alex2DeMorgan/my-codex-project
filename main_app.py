@@ -39,6 +39,8 @@ class InventoryApp:
         self.publisher = FinnPublisher()
         self.preview_images: List[tk.PhotoImage] = []
         self.product_preview_cache: Dict[int, tk.PhotoImage] = {}
+        self.image_thumbnails: Dict[int, tk.PhotoImage] = {}
+        self.placeholder_thumbnail = self._create_placeholder_thumbnail()
 
         self._configure_style()
 
@@ -103,6 +105,25 @@ class InventoryApp:
             foreground="#94a3b8",
             font=("Segoe UI", 11),
             anchor="center",
+        )
+
+        style.configure(
+            "Images.Treeview",
+            background="#ffffff",
+            fieldbackground="#ffffff",
+            rowheight=136,
+            borderwidth=0,
+        )
+        style.map(
+            "Images.Treeview",
+            background=[("selected", "#dbeafe")],
+            foreground=[("selected", text_primary)],
+        )
+        style.configure(
+            "Images.Treeview.Heading",
+            font=("Segoe UI Semibold", 11),
+            background="#f8fafc",
+            foreground=text_secondary,
         )
 
     def _build_ui(self) -> None:
@@ -219,21 +240,22 @@ class InventoryApp:
         images_frame.rowconfigure(0, weight=1)
         images_frame.columnconfigure(0, weight=1)
 
-        columns = ("photo", "categories", "assigned", "path_value")
+        columns = ("categories", "assigned", "path_value")
         self.images_tree = ttk.Treeview(
             images_frame,
             columns=columns,
-            show="headings",
+            show="tree headings",
             selectmode="extended",
             padding=4,
+            style="Images.Treeview",
         )
-        self.images_tree.heading("photo", text="Фото товара")
+        self.images_tree.heading("#0", text="Фото товара")
         self.images_tree.heading("categories", text="Категории")
         self.images_tree.heading("assigned", text="Привязка")
         self.images_tree.heading("path_value", text="")
-        self.images_tree.column("photo", width=300, anchor="w")
-        self.images_tree.column("categories", width=160)
-        self.images_tree.column("assigned", width=100)
+        self.images_tree.column("#0", width=180, anchor="center", stretch=False)
+        self.images_tree.column("categories", width=200, anchor="w")
+        self.images_tree.column("assigned", width=110, anchor="center")
         self.images_tree.column("path_value", width=0, stretch=False)
         self.images_tree.grid(row=0, column=0, sticky="nsew")
 
@@ -339,16 +361,18 @@ class InventoryApp:
         for item in self.images_tree.get_children():
             self.images_tree.delete(item)
 
+        self.image_thumbnails.clear()
         images_df = self.db.get_all_images()
         for _, row in images_df.iterrows():
             categories = ", ".join(json.loads(row["categories"])) if row["categories"] else ""
             assigned = "Да" if row["product_id"] else "Нет"
-            display_name = os.path.basename(row["path"]) if row["path"] else ""
+            thumbnail = self._load_thumbnail(row["id"], row["path"])
             self.images_tree.insert(
                 "",
                 tk.END,
                 iid=str(row["id"]),
-                values=(display_name, categories, assigned, row["path"]),
+                image=thumbnail,
+                values=(categories, assigned, row["path"]),
             )
 
     def _resize_product_cards(self, event: tk.Event) -> None:
@@ -446,6 +470,28 @@ class InventoryApp:
             "Скоро появится",
             "Функция автоматического заполнения находится в разработке.",
         )
+
+    def _create_placeholder_thumbnail(self, size: int = 120) -> tk.PhotoImage:
+        placeholder = tk.PhotoImage(width=size, height=size)
+        placeholder.put("#f1f5f9", to=(0, 0, size, size))
+        border_color = "#cbd5f5"
+        placeholder.put(border_color, to=(0, 0, size, 2))
+        placeholder.put(border_color, to=(0, size - 2, size, size))
+        placeholder.put(border_color, to=(0, 0, 2, size))
+        placeholder.put(border_color, to=(size - 2, 0, size, size))
+        return placeholder
+
+    def _load_thumbnail(self, image_id: int, path: str) -> tk.PhotoImage:
+        if path and os.path.exists(path):
+            try:
+                data_uri = self.image_handler.image_to_tk(path, max_size=120)
+                b64_data = data_uri.split(",", 1)[1]
+                thumbnail = tk.PhotoImage(data=b64_data)
+                self.image_thumbnails[image_id] = thumbnail
+                return thumbnail
+            except Exception:
+                pass
+        return self.placeholder_thumbnail
 
 
 def main() -> None:

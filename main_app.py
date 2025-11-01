@@ -1,8 +1,9 @@
 import json
 import os
+from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import pyautogui
 
@@ -39,14 +40,19 @@ class InventoryApp:
         self.publisher = FinnPublisher()
         self.preview_images: List[tk.PhotoImage] = []
         self.product_preview_cache: Dict[int, tk.PhotoImage] = {}
+        self.sold_product_preview_cache: Dict[int, tk.PhotoImage] = {}
         self.image_thumbnails: Dict[int, tk.PhotoImage] = {}
         self.placeholder_thumbnail = self._create_placeholder_thumbnail()
+        self.product_cards: List[Dict[str, Any]] = []
+        self.selected_product_ids: Set[int] = set()
+        self.last_selected_index: Optional[int] = None
 
         self._configure_style()
 
         self._build_ui()
         self._populate_images_tab()
         self._populate_created_products()
+        self._populate_sold_products()
 
     def _configure_style(self) -> None:
         style = ttk.Style()
@@ -72,6 +78,8 @@ class InventoryApp:
         style.layout("Modern.TNotebook.Tab", style.layout("TNotebook.Tab"))
 
         style.configure("Card.TFrame", background=card_bg, relief="flat")
+        style.configure("CardWrapper.TFrame", background=base_bg, relief="flat")
+        style.configure("SelectedCardWrapper.TFrame", background="#bfdbfe", relief="flat")
         style.configure("Preview.TLabelframe", background=card_bg, padding=(16, 12))
         style.configure("Preview.TLabelframe.Label", font=("Segoe UI Semibold", 11), foreground=text_secondary)
         style.configure("Section.TLabelframe", background=card_bg, padding=(16, 12))
@@ -111,6 +119,13 @@ class InventoryApp:
             foreground="#94a3b8",
             font=("Segoe UI", 11),
             anchor="center",
+        )
+        style.configure(
+            "StatusBadge.TLabel",
+            background="#dcfce7",
+            foreground="#166534",
+            font=("Segoe UI Semibold", 10),
+            padding=(8, 4),
         )
 
         style.configure(
@@ -153,6 +168,11 @@ class InventoryApp:
         self.created_products_frame = ttk.Frame(notebook)
         notebook.add(self.created_products_frame, text="Созданные товары")
         self._build_created_products_tab(self.created_products_frame)
+
+        # Tab for sold products
+        self.sold_products_frame = ttk.Frame(notebook)
+        notebook.add(self.sold_products_frame, text="Проданные товары")
+        self._build_sold_products_tab(self.sold_products_frame)
 
     def _build_add_photo_tab(self, frame: ttk.Frame) -> None:
         frame.columnconfigure(0, weight=1)
@@ -235,13 +255,21 @@ class InventoryApp:
         button_container.grid(row=8, column=0, sticky="ew")
         button_container.columnconfigure(0, weight=1)
 
+        self.toggle_extra_button = ttk.Button(
+            button_container,
+            text="Доп. параметры",
+            style="Secondary.TButton",
+            command=self._toggle_extra_fields,
+        )
+        self.toggle_extra_button.grid(row=0, column=0, sticky="w")
+
         auto_button = ttk.Button(
             button_container,
             text="Создать автоматически",
             style="Secondary.TButton",
             command=self._auto_fill_product,
         )
-        auto_button.grid(row=0, column=0, sticky="w")
+        auto_button.grid(row=0, column=1, sticky="e", padx=(12, 12))
 
         create_button = ttk.Button(
             button_container,
@@ -249,7 +277,67 @@ class InventoryApp:
             style="Accent.TButton",
             command=self._create_product,
         )
-        create_button.grid(row=0, column=1, sticky="e")
+        create_button.grid(row=0, column=2, sticky="e")
+
+        self.additional_section = ttk.LabelFrame(
+            input_frame,
+            text="Дополнительные параметры",
+            style="Section.TLabelframe",
+        )
+        self.additional_section.grid(row=9, column=0, sticky="ew", pady=(16, 0))
+        self.additional_section.columnconfigure(0, weight=1)
+        self.additional_section.grid_remove()
+
+        ttk.Label(self.additional_section, text="Почтовый номер", font=("Segoe UI", 11)).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.postal_code_entry = ttk.Entry(self.additional_section, font=("Segoe UI", 11))
+        self.postal_code_entry.grid(row=1, column=0, sticky="ew", pady=(4, 12))
+
+        category_row = ttk.Frame(self.additional_section, style="SectionFrame.TFrame")
+        category_row.grid(row=2, column=0, sticky="ew")
+        category_row.columnconfigure(0, weight=1)
+
+        ttk.Label(category_row, text="Главная категория", font=("Segoe UI", 11)).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.main_category_var = tk.StringVar()
+        self.main_category_entry = ttk.Entry(
+            category_row,
+            font=("Segoe UI", 11),
+            textvariable=self.main_category_var,
+            state="readonly",
+        )
+        self.main_category_entry.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+
+        suggest_button = ttk.Button(
+            category_row,
+            text="Определить автоматически",
+            style="Secondary.TButton",
+            command=self._suggest_main_category,
+        )
+        suggest_button.grid(row=1, column=1, sticky="e", padx=(12, 0))
+
+        ttk.Label(
+            self.additional_section,
+            text="Заметки для публикации",
+            font=("Segoe UI", 11),
+        ).grid(row=3, column=0, sticky="w", pady=(16, 0))
+        self.publish_notes = tk.Text(
+            self.additional_section,
+            height=4,
+            font=("Segoe UI", 11),
+            wrap="word",
+            relief="flat",
+            borderwidth=1,
+        )
+        self.publish_notes.configure(
+            background="#ffffff",
+            highlightthickness=1,
+            highlightbackground="#e2e8f0",
+            highlightcolor="#2563eb",
+        )
+        self.publish_notes.grid(row=4, column=0, sticky="ew", pady=(4, 0))
 
         # Image selection
         images_frame = ttk.LabelFrame(frame, text="Выберите изображения", style="Section.TLabelframe")
@@ -275,6 +363,7 @@ class InventoryApp:
         self.images_tree.column("assigned", width=110, anchor="center")
         self.images_tree.column("path_value", width=0, stretch=False)
         self.images_tree.grid(row=0, column=0, sticky="nsew")
+        self.images_tree.bind("<<TreeviewSelect>>", self._on_images_selection_change)
 
         scrollbar = ttk.Scrollbar(images_frame, orient=tk.VERTICAL, command=self.images_tree.yview)
         self.images_tree.configure(yscrollcommand=scrollbar.set)
@@ -311,9 +400,41 @@ class InventoryApp:
         )
         subtitle.grid(row=1, column=0, sticky="w", pady=(6, 18))
 
+        actions_frame = ttk.Frame(frame, style="SectionFrame.TFrame")
+        actions_frame.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        actions_frame.columnconfigure(0, weight=1)
+
+        self.selection_label = ttk.Label(
+            actions_frame,
+            text="Выберите товары для групповых действий (Shift — диапазон, Ctrl — выборочно)",
+            style="CardBody.TLabel",
+        )
+        self.selection_label.grid(row=0, column=0, sticky="w")
+
+        buttons_holder = ttk.Frame(actions_frame, style="SectionFrame.TFrame")
+        buttons_holder.grid(row=0, column=1, sticky="e")
+
+        self.mark_sold_button = ttk.Button(
+            buttons_holder,
+            text="Отметить как продано",
+            style="Secondary.TButton",
+            command=self._mark_selected_as_sold,
+            state="disabled",
+        )
+        self.mark_sold_button.grid(row=0, column=0, sticky="e")
+
+        self.delete_selected_button = ttk.Button(
+            buttons_holder,
+            text="Удалить выбранные",
+            style="Secondary.TButton",
+            command=self._delete_selected_products,
+            state="disabled",
+        )
+        self.delete_selected_button.grid(row=0, column=1, sticky="e", padx=(12, 0))
+
         container = ttk.Frame(frame, style="Card.TFrame")
-        container.grid(row=2, column=0, sticky="nsew")
-        frame.rowconfigure(2, weight=1)
+        container.grid(row=3, column=0, sticky="nsew")
+        frame.rowconfigure(3, weight=1)
         container.columnconfigure(0, weight=1)
 
         self.products_canvas = tk.Canvas(container, highlightthickness=0, background="#ffffff")
@@ -331,6 +452,43 @@ class InventoryApp:
             lambda event: self.products_canvas.configure(scrollregion=self.products_canvas.bbox("all")),
         )
         self.products_canvas.bind("<Configure>", self._resize_product_cards)
+
+    def _build_sold_products_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+
+        header = ttk.Label(frame, text="Проданные товары", style="PageTitle.TLabel")
+        header.grid(row=0, column=0, sticky="w", pady=(4, 0))
+
+        subtitle = ttk.Label(
+            frame,
+            text="Архив реализованных позиций с быстрым доступом к истории цен и дате продажи.",
+            style="Subtitle.TLabel",
+        )
+        subtitle.grid(row=1, column=0, sticky="w", pady=(6, 18))
+
+        container = ttk.Frame(frame, style="Card.TFrame")
+        container.grid(row=2, column=0, sticky="nsew")
+        frame.rowconfigure(2, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        self.sold_canvas = tk.Canvas(container, highlightthickness=0, background="#ffffff")
+        self.sold_canvas.grid(row=0, column=0, sticky="nsew")
+        container.rowconfigure(0, weight=1)
+
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=self.sold_canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.sold_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.sold_inner = ttk.Frame(self.sold_canvas, style="Card.TFrame")
+        self.sold_window = self.sold_canvas.create_window((0, 0), window=self.sold_inner, anchor="nw")
+        self.sold_inner.bind(
+            "<Configure>",
+            lambda event: self.sold_canvas.configure(scrollregion=self.sold_canvas.bbox("all")),
+        )
+        self.sold_canvas.bind(
+            "<Configure>",
+            lambda event: self.sold_canvas.itemconfigure(self.sold_window, width=event.width),
+        )
 
     def _upload_images(self) -> None:
         file_paths = filedialog.askopenfilenames(
@@ -408,8 +566,11 @@ class InventoryApp:
         for child in self.products_inner.winfo_children():
             child.destroy()
         self.product_preview_cache.clear()
+        previous_selection = set(self.selected_product_ids)
+        self.selected_product_ids.clear()
+        self.product_cards.clear()
 
-        products_df = self.db.get_products()
+        products_df = self.db.get_products(status="active")
         if products_df.empty:
             empty_label = ttk.Label(
                 self.products_inner,
@@ -417,11 +578,21 @@ class InventoryApp:
                 style="CardBody.TLabel",
             )
             empty_label.grid(row=0, column=0, sticky="w", padx=24, pady=24)
+            self.selection_label.configure(text="Нет активных товаров для отображения")
+            self._update_bulk_actions_state()
             return
 
-        for index, row in products_df.iterrows():
-            card = ttk.Frame(self.products_inner, style="Card.TFrame", padding=(20, 16))
-            card.grid(row=index, column=0, sticky="ew", padx=16, pady=(0 if index == 0 else 12))
+        for index, (_, row) in enumerate(products_df.iterrows()):
+            wrapper = ttk.Frame(
+                self.products_inner,
+                style="CardWrapper.TFrame",
+                padding=2,
+            )
+            wrapper.grid(row=index, column=0, sticky="ew", padx=16, pady=(0 if index == 0 else 12))
+            wrapper.columnconfigure(0, weight=1)
+
+            card = ttk.Frame(wrapper, style="Card.TFrame", padding=(20, 16))
+            card.grid(row=0, column=0, sticky="ew")
             card.columnconfigure(1, weight=1)
             card.columnconfigure(2, weight=0)
 
@@ -452,16 +623,16 @@ class InventoryApp:
                     width=18,
                 )
 
-            image_label.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 20))
+            image_label.grid(row=0, column=0, rowspan=5, sticky="nw", padx=(0, 20))
 
             main_photo_badge = ttk.Label(card, text="Главное фото", style="CardBody.TLabel")
-            main_photo_badge.grid(row=3, column=0, sticky="n", padx=(0, 20), pady=(12, 0))
+            main_photo_badge.grid(row=4, column=0, sticky="n", padx=(0, 20), pady=(12, 0))
 
             title_label = ttk.Label(card, text=row["name"], style="CardTitle.TLabel")
             title_label.grid(row=0, column=1, sticky="w")
 
             action_frame = ttk.Frame(card, style="SectionFrame.TFrame")
-            action_frame.grid(row=0, column=2, rowspan=4, sticky="ne")
+            action_frame.grid(row=0, column=2, rowspan=5, sticky="ne")
 
             delete_button = ttk.Button(
                 action_frame,
@@ -471,6 +642,10 @@ class InventoryApp:
                 command=lambda pid=row["id"], name=row["name"]: self._confirm_delete_product(pid, name),
             )
             delete_button.grid(row=0, column=0, sticky="ne")
+            delete_button.bind(
+                "<Button-1>",
+                lambda event, btn=delete_button: self._handle_button_click(event, btn),
+            )
 
             edit_button = ttk.Button(
                 action_frame,
@@ -479,6 +654,10 @@ class InventoryApp:
                 command=lambda product=row: self._open_edit_product_dialog(product),
             )
             edit_button.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+            edit_button.bind(
+                "<Button-1>",
+                lambda event, btn=edit_button: self._handle_button_click(event, btn),
+            )
 
             realization_button = ttk.Button(
                 action_frame,
@@ -487,6 +666,10 @@ class InventoryApp:
                 command=lambda product=row: self._open_realization_stub(product),
             )
             realization_button.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+            realization_button.bind(
+                "<Button-1>",
+                lambda event, btn=realization_button: self._handle_button_click(event, btn),
+            )
 
             description = row["description"] or "Описание не указано"
             description_label = ttk.Label(card, text=description, style="CardBody.TLabel")
@@ -501,20 +684,266 @@ class InventoryApp:
             )
             price_label.grid(row=2, column=1, sticky="w", pady=(8, 0))
 
+            category_text = row.get("main_category") or "Категория не определена"
+            postal_text = row.get("postal_code") or "Не указан"
+            category_label = ttk.Label(
+                card,
+                text=f"Категория: {category_text}   Почтовый номер: {postal_text}",
+                style="CardBody.TLabel",
+            )
+            category_label.grid(row=3, column=1, sticky="w", pady=(4, 0))
+
             total_photos = len(row.get("photo_paths", []) or [])
             photos_label = ttk.Label(
                 card,
                 text=f"Фотографии: {total_photos} шт. Первое фото отображается как главное.",
                 style="CardBody.TLabel",
             )
-            photos_label.grid(row=3, column=1, sticky="w", pady=(8, 0))
+            photos_label.grid(row=4, column=1, sticky="w", pady=(8, 0))
 
+            self._bind_card_selection(card, index, row["id"])
+
+            if row["id"] in previous_selection:
+                self.selected_product_ids.add(row["id"])
+
+            self.product_cards.append(
+                {
+                    "id": row["id"],
+                    "index": index,
+                    "wrapper": wrapper,
+                    "card": card,
+                    "data": row,
+                }
+            )
+
+        self._refresh_product_selection()
+        self._update_bulk_actions_state()
+
+    def _bind_card_selection(self, widget: tk.Widget, index: int, product_id: int) -> None:
+        if isinstance(widget, ttk.Button):
+            return
+        widget.bind(
+            "<Button-1>",
+            lambda event, idx=index, pid=product_id: self._on_product_card_click(event, idx, pid),
+        )
+        for child in widget.winfo_children():
+            self._bind_card_selection(child, index, product_id)
+
+    def _handle_button_click(self, _event: tk.Event, button: ttk.Button) -> str:
+        button.invoke()
+        return "break"
+
+    def _refresh_product_selection(self) -> None:
+        total_cards = len(self.product_cards)
+        selected_count = len(self.selected_product_ids)
+        for card_info in self.product_cards:
+            style_name = (
+                "SelectedCardWrapper.TFrame"
+                if card_info["id"] in self.selected_product_ids
+                else "CardWrapper.TFrame"
+            )
+            card_info["wrapper"].configure(style=style_name)
+
+        if selected_count:
+            self.selection_label.configure(
+                text=(
+                    f"Выбрано товаров: {selected_count}. Вы можете отметить их как проданные или удалить."
+                )
+            )
+        else:
+            base_text = (
+                "Выберите товары для групповых действий (Shift — диапазон, Ctrl — выборочно)"
+                if total_cards
+                else "Нет активных товаров для отображения"
+            )
+            self.selection_label.configure(text=base_text)
+            self.last_selected_index = None
+
+    def _update_bulk_actions_state(self) -> None:
+        state = "normal" if self.selected_product_ids else "disabled"
+        self.mark_sold_button.configure(state=state)
+        self.delete_selected_button.configure(state=state)
+
+    def _clear_product_selection(self) -> None:
+        self.selected_product_ids.clear()
+        self.last_selected_index = None
+        self._refresh_product_selection()
+        self._update_bulk_actions_state()
+
+    def _on_product_card_click(self, event: tk.Event, index: int, product_id: int) -> str:
+        shift_pressed = bool(event.state & 0x0001)
+        control_pressed = bool(event.state & 0x0004 or event.state & 0x0008)
+
+        if shift_pressed and self.last_selected_index is not None and self.product_cards:
+            start = min(self.last_selected_index, index)
+            end = max(self.last_selected_index, index)
+            self.selected_product_ids = {
+                self.product_cards[i]["id"] for i in range(start, end + 1)
+            }
+            self.last_selected_index = index
+        elif control_pressed:
+            if product_id in self.selected_product_ids:
+                self.selected_product_ids.remove(product_id)
+            else:
+                self.selected_product_ids.add(product_id)
+            self.last_selected_index = index if self.selected_product_ids else None
+        else:
+            self.selected_product_ids = {product_id}
+            self.last_selected_index = index
+
+        self._refresh_product_selection()
+        self._update_bulk_actions_state()
+        return "break"
+
+    def _mark_selected_as_sold(self) -> None:
+        if not self.selected_product_ids:
+            return
+        count = len(self.selected_product_ids)
+        if not messagebox.askyesno(
+            "Перенос в проданные",
+            f"Отметить {count} товар(ов) как проданные и перенести в архив?",
+        ):
+            return
+        try:
+            self.db.mark_products_as_sold(self.selected_product_ids)
+        except Exception as exc:  # pragma: no cover - GUI feedback
+            messagebox.showerror("Ошибка", str(exc))
+            return
+
+        messagebox.showinfo(
+            "Готово",
+            f"Товары успешно перенесены в раздел \"Проданные\" ({count} шт.)",
+        )
+        self._clear_product_selection()
+        self._populate_created_products()
+        self._populate_sold_products()
+
+    def _delete_selected_products(self) -> None:
+        if not self.selected_product_ids:
+            return
+        count = len(self.selected_product_ids)
+        if not messagebox.askyesno(
+            "Удаление товаров",
+            f"Вы действительно хотите удалить {count} выбранных товар(ов)?",
+        ):
+            return
+        try:
+            self.db.delete_products(self.selected_product_ids)
+        except Exception as exc:  # pragma: no cover - GUI feedback
+            messagebox.showerror("Ошибка", str(exc))
+            return
+
+        messagebox.showinfo("Готово", "Выбранные товары удалены")
+        self._clear_product_selection()
+        self._populate_created_products()
+        self._populate_sold_products()
+
+    def _populate_sold_products(self) -> None:
+        for child in self.sold_inner.winfo_children():
+            child.destroy()
+        self.sold_product_preview_cache.clear()
+
+        sold_df = self.db.get_products(status="sold")
+        if sold_df.empty:
+            empty_label = ttk.Label(
+                self.sold_inner,
+                text="Проданных товаров пока нет. Отмечайте позиции как реализованные во вкладке \"Созданные товары\".",
+                style="CardBody.TLabel",
+            )
+            empty_label.grid(row=0, column=0, sticky="w", padx=24, pady=24)
+            return
+
+        for index, (_, row) in enumerate(sold_df.iterrows()):
+            card = ttk.Frame(self.sold_inner, style="Card.TFrame", padding=(20, 16))
+            card.grid(row=index, column=0, sticky="ew", padx=16, pady=(0 if index == 0 else 12))
+            card.columnconfigure(1, weight=1)
+
+            first_image_path = None
+            photo_paths = row.get("photo_paths", [])
+            if photo_paths:
+                first_image_path = photo_paths[0]
+
+            if first_image_path and os.path.exists(first_image_path):
+                try:
+                    data_uri = self.image_handler.image_to_tk(first_image_path, max_size=120)
+                    b64_data = data_uri.split(",", 1)[1]
+                    photo = tk.PhotoImage(data=b64_data)
+                    self.sold_product_preview_cache[row["id"]] = photo
+                    image_label = ttk.Label(card, image=photo, style="CardImage.TLabel")
+                except Exception:
+                    image_label = ttk.Label(
+                        card,
+                        text="Нет предпросмотра",
+                        style="CardImagePlaceholder.TLabel",
+                        width=18,
+                    )
+            else:
+                image_label = ttk.Label(
+                    card,
+                    text="Фото отсутствует",
+                    style="CardImagePlaceholder.TLabel",
+                    width=18,
+                )
+
+            image_label.grid(row=0, column=0, rowspan=5, sticky="nw", padx=(0, 20))
+
+            status_badge = ttk.Label(
+                card,
+                text=f"Продано: {self._format_sold_datetime(row.get('sold_at'))}",
+                style="StatusBadge.TLabel",
+            )
+            status_badge.grid(row=0, column=2, sticky="ne")
+
+            title_label = ttk.Label(card, text=row["name"], style="CardTitle.TLabel")
+            title_label.grid(row=0, column=1, sticky="w")
+
+            description = row.get("description") or "Описание не указано"
+            description_label = ttk.Label(card, text=description, style="CardBody.TLabel")
+            description_label.grid(row=1, column=1, sticky="ew", pady=(8, 0))
+
+            purchase_price_text = self._format_price_value(row.get("purchase_price"))
+            sale_price_text = self._format_price_value(row.get("sale_price"))
+            price_label = ttk.Label(
+                card,
+                text=f"Закупка: {purchase_price_text}   Продажа: {sale_price_text}",
+                style="CardBody.TLabel",
+            )
+            price_label.grid(row=2, column=1, sticky="w", pady=(8, 0))
+
+            category_text = row.get("main_category") or "Категория не определена"
+            postal_text = row.get("postal_code") or "Не указан"
+            info_label = ttk.Label(
+                card,
+                text=f"Категория: {category_text}   Почтовый номер: {postal_text}",
+                style="CardBody.TLabel",
+            )
+            info_label.grid(row=3, column=1, sticky="w", pady=(4, 0))
+
+            total_photos = len(row.get("photo_paths", []) or [])
+            photos_label = ttk.Label(
+                card,
+                text=f"Фотографии: {total_photos} шт.",
+                style="CardBody.TLabel",
+            )
+            photos_label.grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+    def _format_sold_datetime(self, value: Optional[str]) -> str:
+        if not value:
+            return "—"
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+        return dt.strftime("%d.%m.%Y %H:%M")
     def _create_product(self) -> None:
         name = self.name_entry.get().strip()
         description = self.description_text.get("1.0", tk.END).strip()
         selected_items = self.images_tree.selection()
         purchase_raw = self.purchase_price_entry.get().strip()
         sale_raw = self.sale_price_entry.get().strip()
+        postal_code = self.postal_code_entry.get().strip()
+        main_category = self.main_category_var.get().strip()
+        notes = self.publish_notes.get("1.0", tk.END).strip()
 
         purchase_price = None
         if purchase_raw:
@@ -549,6 +978,9 @@ class InventoryApp:
                 [int(item) for item in selected_items],
                 purchase_price=purchase_price,
                 sale_price=sale_price,
+                postal_code=postal_code or None,
+                main_category=main_category or None,
+                publish_notes=notes or None,
             )
             product_info = {
                 "id": product_id,
@@ -566,9 +998,12 @@ class InventoryApp:
         self.description_text.delete("1.0", tk.END)
         self.purchase_price_entry.delete(0, tk.END)
         self.sale_price_entry.delete(0, tk.END)
+        self.postal_code_entry.delete(0, tk.END)
+        self.main_category_var.set("")
+        self.publish_notes.delete("1.0", tk.END)
         self._populate_images_tab()
         self._populate_created_products()
-
+        
     def _auto_fill_product(self) -> None:
         messagebox.showinfo(
             "Скоро появится",
@@ -588,8 +1023,13 @@ class InventoryApp:
             return
 
         messagebox.showinfo("Готово", "Товар удалён")
+        if product_id in self.selected_product_ids:
+            self.selected_product_ids.discard(product_id)
+            self._refresh_product_selection()
+            self._update_bulk_actions_state()
         self._populate_images_tab()
         self._populate_created_products()
+        self._populate_sold_products()
 
     def _open_edit_product_dialog(self, product_row) -> None:
         product_name = product_row.get("name", "Товар")
@@ -607,6 +1047,58 @@ class InventoryApp:
             "Реализация",
             f"Подготовка реализации для \"{product_name}\" скоро будет доступна.",
         )
+
+    def _toggle_extra_fields(self) -> None:
+        if self.additional_section.winfo_ismapped():
+            self.additional_section.grid_remove()
+            self.toggle_extra_button.configure(text="Доп. параметры")
+        else:
+            self.additional_section.grid()
+            self.toggle_extra_button.configure(text="Скрыть доп. параметры")
+            self._suggest_main_category(auto=True)
+
+    def _suggest_main_category(self, auto: bool = False) -> None:
+        selected_items = self.images_tree.selection()
+        if not selected_items:
+            if not auto:
+                messagebox.showinfo(
+                    "Категория не определена",
+                    "Выберите изображения, чтобы определить категорию товара",
+                )
+            return
+
+        categories: List[str] = []
+        for item in selected_items:
+            cats_text = self.images_tree.set(item, "categories")
+            if cats_text:
+                categories.extend(
+                    [part.strip() for part in cats_text.split(",") if part.strip()]
+                )
+
+        if not categories:
+            if not auto:
+                messagebox.showwarning(
+                    "Категории не найдены",
+                    "Не удалось определить категории по выбранным изображениям",
+                )
+            return
+
+        frequency: Dict[str, int] = {}
+        for category in categories:
+            frequency[category] = frequency.get(category, 0) + 1
+
+        main_category = max(frequency, key=frequency.get)
+        self.main_category_var.set(main_category)
+
+        if not auto:
+            messagebox.showinfo(
+                "Категория определена",
+                f"Основная категория выбрана автоматически: {main_category}",
+            )
+
+    def _on_images_selection_change(self, _event: tk.Event) -> None:
+        if self.additional_section.winfo_ismapped():
+            self._suggest_main_category(auto=True)
 
     def _format_price_value(self, value: Optional[float]) -> str:
         if value in (None, ""):

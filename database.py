@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Sequence
 
 import pandas as pd
 
@@ -28,7 +28,12 @@ class DatabaseManager:
                 date_added TEXT NOT NULL,
                 purchase_price REAL,
                 sale_price REAL,
-                photo_paths TEXT NOT NULL
+                photo_paths TEXT NOT NULL,
+                postal_code TEXT,
+                main_category TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                sold_at TEXT,
+                publish_notes TEXT
             )
         """
         )
@@ -51,6 +56,16 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE products ADD COLUMN purchase_price REAL")
         if "sale_price" not in existing_columns:
             cursor.execute("ALTER TABLE products ADD COLUMN sale_price REAL")
+        if "postal_code" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN postal_code TEXT")
+        if "main_category" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN main_category TEXT")
+        if "status" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+        if "sold_at" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN sold_at TEXT")
+        if "publish_notes" not in existing_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN publish_notes TEXT")
         self.conn.commit()
 
     def add_image(self, path: str, uploaded_at: Optional[str] = None, *, categories: Optional[List[str]] = None) -> int:
@@ -90,6 +105,10 @@ class DatabaseManager:
         date_added: Optional[str] = None,
         purchase_price: Optional[float] = None,
         sale_price: Optional[float] = None,
+        postal_code: Optional[str] = None,
+        main_category: Optional[str] = None,
+        status: str = "active",
+        publish_notes: Optional[str] = None,
     ) -> int:
         date_added = date_added or datetime.utcnow().isoformat()
         image_ids = list(image_ids)
@@ -109,10 +128,33 @@ class DatabaseManager:
         photo_paths = [row_map[img_id] for img_id in image_ids]
         cursor.execute(
             """
-            INSERT INTO products(name, description, date_added, purchase_price, sale_price, photo_paths)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO products(
+                name,
+                description,
+                date_added,
+                purchase_price,
+                sale_price,
+                photo_paths,
+                postal_code,
+                main_category,
+                status,
+                sold_at,
+                publish_notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             """,
-            (name, description, date_added, purchase_price, sale_price, json.dumps(photo_paths)),
+            (
+                name,
+                description,
+                date_added,
+                purchase_price,
+                sale_price,
+                json.dumps(photo_paths),
+                postal_code,
+                main_category,
+                status,
+                publish_notes,
+            ),
         )
         product_id = int(cursor.lastrowid)
         cursor.execute(
@@ -122,15 +164,18 @@ class DatabaseManager:
         self.conn.commit()
         return product_id
 
-    def get_products(self) -> pd.DataFrame:
+    def get_products(self, status: Optional[str] = None) -> pd.DataFrame:
         cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, name, description, date_added, purchase_price, sale_price, photo_paths
-            FROM products
-            ORDER BY date_added DESC
-            """
+        base_query = (
+            "SELECT id, name, description, date_added, purchase_price, sale_price, photo_paths, "
+            "postal_code, main_category, status, sold_at, publish_notes FROM products"
         )
+        params: Sequence = ()
+        if status:
+            base_query += " WHERE status = ?"
+            params = (status,)
+        base_query += " ORDER BY date_added DESC"
+        cursor.execute(base_query, params)
         rows = cursor.fetchall()
         if not rows:
             return pd.DataFrame(
@@ -142,6 +187,11 @@ class DatabaseManager:
                     "purchase_price",
                     "sale_price",
                     "photo_paths",
+                    "postal_code",
+                    "main_category",
+                    "status",
+                    "sold_at",
+                    "publish_notes",
                 ]
             )
         frame = pd.DataFrame(rows, columns=rows[0].keys())
@@ -149,12 +199,48 @@ class DatabaseManager:
         for column in ("purchase_price", "sale_price"):
             if column in frame.columns:
                 frame[column] = frame[column].where(frame[column].notna(), None)
+        if "postal_code" in frame.columns:
+            frame["postal_code"] = frame["postal_code"].where(frame["postal_code"].notna(), None)
+        if "main_category" in frame.columns:
+            frame["main_category"] = frame["main_category"].where(frame["main_category"].notna(), None)
+        if "status" in frame.columns:
+            frame["status"] = frame["status"].where(frame["status"].notna(), "active")
+        if "sold_at" in frame.columns:
+            frame["sold_at"] = frame["sold_at"].where(frame["sold_at"].notna(), None)
+        if "publish_notes" in frame.columns:
+            frame["publish_notes"] = frame["publish_notes"].where(frame["publish_notes"].notna(), None)
         return frame
 
     def delete_product(self, product_id: int) -> None:
         cursor = self.conn.cursor()
         cursor.execute("UPDATE images SET product_id = NULL WHERE product_id = ?", (product_id,))
         cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        self.conn.commit()
+
+    def delete_products(self, product_ids: Iterable[int]) -> None:
+        product_ids = list(product_ids)
+        if not product_ids:
+            return
+        cursor = self.conn.cursor()
+        placeholders = ",".join("?" for _ in product_ids)
+        cursor.execute(
+            f"UPDATE images SET product_id = NULL WHERE product_id IN ({placeholders})",
+            tuple(product_ids),
+        )
+        cursor.execute(f"DELETE FROM products WHERE id IN ({placeholders})", tuple(product_ids))
+        self.conn.commit()
+
+    def mark_products_as_sold(self, product_ids: Iterable[int]) -> None:
+        product_ids = list(product_ids)
+        if not product_ids:
+            return
+        sold_at = datetime.utcnow().isoformat()
+        cursor = self.conn.cursor()
+        placeholders = ",".join("?" for _ in product_ids)
+        cursor.execute(
+            f"UPDATE products SET status = 'sold', sold_at = ? WHERE id IN ({placeholders})",
+            (sold_at, *product_ids),
+        )
         self.conn.commit()
 
     def close(self) -> None:

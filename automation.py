@@ -21,7 +21,9 @@ from datetime import datetime
 import logging
 import threading
 import time
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
+
+from database import RekordStorage
 
 try:  # pragma: no cover - the optional dependency might not be installed
     from pynput import keyboard, mouse
@@ -130,16 +132,20 @@ class ClipboardAction(Action):
 class AutomationManager:
     """Coordinate recorded actions and play them back when requested."""
 
-    def __init__(self) -> None:
-        self._records: List["Rekord"] = []
+    def __init__(self, storage: Optional[RekordStorage] = None) -> None:
+        self.storage = storage or RekordStorage()
+        self._records: List["Rekord"] = list(self.storage.load())
         self._playback_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        logger.debug("AutomationManager initialised")
+        logger.info(
+            "AutomationManager initialised with %d stored records", len(self._records)
+        )
 
     # A small import at runtime to avoid a circular dependency.
     def add_record(self, record: "Rekord") -> None:
         logger.info("Adding new record '%s' with %d actions", record.name, len(record.actions))
         self._records.append(record)
+        self.storage.save_all(self._records)
 
     @property
     def records(self) -> Sequence["Rekord"]:
@@ -148,6 +154,7 @@ class AutomationManager:
     def clear(self) -> None:
         logger.info("Clearing %d stored records", len(self._records))
         self._records.clear()
+        self.storage.clear()
 
     def playback(self, record: "Rekord", speed: float = 1.0) -> None:
         """Play back all actions from *record* on a background thread."""

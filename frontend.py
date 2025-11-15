@@ -133,6 +133,7 @@ class AutomationApp(tk.Tk):
 
         self.automation_tab = AutomationTab(notebook, self.manager)
         notebook.add(self.automation_tab, text="Автоматизация")
+        self.automation_tab.refresh()
 
         recorder_tab = RecorderTab(notebook, on_record_ready=self._on_record_ready)
         notebook.add(recorder_tab, text="Запись")

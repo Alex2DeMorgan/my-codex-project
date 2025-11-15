@@ -192,7 +192,51 @@ class AutomationManager:
         self._playback_thread = None
 
     @staticmethod
-    def _convert_actions(record: "Rekord") -> List[Action]:
+    def _to_int(value: object, default: int = 0) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return default
+            try:
+                if "." in value or "e" in value.lower():
+                    return int(float(value))
+                return int(value)
+            except ValueError:
+                logger.debug("Failed to convert '%s' to int; using default %s", value, default)
+        return default
+
+    @staticmethod
+    def _to_bool(value: object, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            value_lower = value.strip().lower()
+            if not value_lower:
+                return default
+            if value_lower in {"true", "1", "yes", "pressed", "down", "on"}:
+                return True
+            if value_lower in {"false", "0", "no", "released", "up", "off"}:
+                return False
+        return default
+
+    @staticmethod
+    def _to_str(value: object, default: str = "") -> str:
+        if value is None:
+            return default
+        return str(value)
+
+    @classmethod
+    def _convert_actions(cls, record: "Rekord") -> List[Action]:
         actions: List[Action] = []
         for item in record.actions:
             if isinstance(item, Action):
@@ -207,8 +251,8 @@ class AutomationManager:
                     MouseMoveAction(
                         timestamp=item.timestamp,
                         description=description,
-                        x=int(item.payload.get("x", 0)),
-                        y=int(item.payload.get("y", 0)),
+                        x=cls._to_int(item.payload.get("x")),
+                        y=cls._to_int(item.payload.get("y")),
                     )
                 )
             elif item.event_type == "mouse_click":
@@ -216,8 +260,8 @@ class AutomationManager:
                     MouseClickAction(
                         timestamp=item.timestamp,
                         description=description,
-                        button=str(item.payload.get("button", "left")),
-                        pressed=bool(item.payload.get("pressed", True)),
+                        button=cls._to_str(item.payload.get("button", "left"), "left"),
+                        pressed=cls._to_bool(item.payload.get("pressed", True)),
                     )
                 )
             elif item.event_type == "keyboard":
@@ -225,8 +269,8 @@ class AutomationManager:
                     KeyboardAction(
                         timestamp=item.timestamp,
                         description=description,
-                        key=str(item.payload.get("key", "")),
-                        pressed=bool(item.payload.get("pressed", True)),
+                        key=cls._to_str(item.payload.get("key")),
+                        pressed=cls._to_bool(item.payload.get("pressed", True)),
                     )
                 )
             elif item.event_type == "clipboard":

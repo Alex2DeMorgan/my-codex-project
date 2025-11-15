@@ -155,12 +155,20 @@ class Recorder:
         logger.info("Recording stopped: %s", self.current_rekord.name if self.current_rekord else "–")
         self.is_recording = False
 
-        for listener in (self._mouse_listener, self._keyboard_listener):
+        for attr in ("_mouse_listener", "_keyboard_listener"):
+            listener = getattr(self, attr)
             if listener is not None:
                 listener.stop()
+                try:
+                    listener.join(timeout=1)
+                except Exception:  # pragma: no cover - defensive logging
+                    logger.debug("Listener join failed for %s", attr, exc_info=True)
+                setattr(self, attr, None)
 
         if self._clipboard_monitor is not None:
             self._clipboard_monitor.stop()
+            self._clipboard_monitor.join(timeout=1)
+            self._clipboard_monitor = None
 
         rekord = self.current_rekord
         self.current_rekord = None
@@ -208,15 +216,24 @@ class RecorderTab(ttk.Frame):
         self._recorder = Recorder()
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(4, weight=1)
 
         self.status_var = tk.StringVar(value="Ожидание начала записи")
+        self.name_var = tk.StringVar()
 
         header = ttk.Label(self, text="Запись действий пользователя", font=("TkDefaultFont", 12, "bold"))
         header.grid(column=0, row=0, sticky="w", padx=10, pady=(10, 4))
 
+        name_row = ttk.Frame(self)
+        name_row.grid(column=0, row=1, sticky="ew", padx=10)
+        name_label = ttk.Label(name_row, text="Название записи:")
+        name_label.grid(column=0, row=0, sticky="w")
+        name_entry = ttk.Entry(name_row, textvariable=self.name_var)
+        name_entry.grid(column=1, row=0, sticky="ew", padx=(6, 0))
+        name_row.columnconfigure(1, weight=1)
+
         controls = ttk.Frame(self)
-        controls.grid(column=0, row=1, sticky="ew", padx=10)
+        controls.grid(column=0, row=2, sticky="ew", padx=10, pady=(6, 0))
 
         start_button = ttk.Button(controls, text="Начать запись", command=self._start_recording)
         start_button.grid(column=0, row=0, padx=(0, 5))
@@ -225,16 +242,18 @@ class RecorderTab(ttk.Frame):
         stop_button.grid(column=1, row=0, padx=(5, 0))
 
         status_label = ttk.Label(self, textvariable=self.status_var)
-        status_label.grid(column=0, row=2, sticky="ew", padx=10, pady=(10, 4))
+        status_label.grid(column=0, row=3, sticky="ew", padx=10, pady=(10, 4))
 
         self.actions_list = tk.Listbox(self, height=10)
-        self.actions_list.grid(column=0, row=3, sticky="nsew", padx=10, pady=(0, 10))
+        self.actions_list.grid(column=0, row=4, sticky="nsew", padx=10, pady=(0, 10))
 
     def _start_recording(self) -> None:
-        rekord = self._recorder.start()
+        requested_name = self.name_var.get().strip() or None
+        rekord = self._recorder.start(name=requested_name)
         if rekord is None:
             self.status_var.set("Невозможно начать запись: нет доступа к устройствам")
             return
+        self.name_var.set(rekord.name)
         self.actions_list.delete(0, tk.END)
         self.status_var.set(f"Идёт запись: {rekord.name}")
         self.after(200, self._refresh_actions)
@@ -246,15 +265,22 @@ class RecorderTab(ttk.Frame):
             return
         self.status_var.set(f"Запись завершена: {rekord.to_summary()}")
         if rekord.actions:
+            self._render_actions(rekord)
             self._on_record_ready(rekord)
+        else:
+            self.actions_list.delete(0, tk.END)
+        self.name_var.set("")
 
     def _refresh_actions(self) -> None:
         if not self._recorder.is_recording or not self._recorder.current_rekord:
             return
         rekord = self._recorder.current_rekord
+        self._render_actions(rekord)
+        self.after(500, self._refresh_actions)
+
+    def _render_actions(self, rekord: Rekord) -> None:
         self.actions_list.delete(0, tk.END)
         for action in rekord.actions[-50:]:
             human = f"{time.strftime('%H:%M:%S', time.localtime(action.timestamp))} · {action.event_type}"
             self.actions_list.insert(tk.END, human)
-        self.after(500, self._refresh_actions)
 

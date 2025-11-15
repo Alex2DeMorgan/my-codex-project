@@ -82,17 +82,38 @@ class MouseMoveAction(Action):
 class MouseClickAction(Action):
     button: str = "left"
     pressed: bool = True
+    x: Optional[int] = None
+    y: Optional[int] = None
 
     def _execute_impl(self) -> None:  # pragma: no cover - depends on backend
         if mouse is None:
             logger.warning("Mouse backend is not available; skipping click")
             return
         controller = mouse.Controller()
+        if self.x is not None and self.y is not None:
+            controller.position = (self.x, self.y)
         button = getattr(mouse.Button, self.button, mouse.Button.left)
         if self.pressed:
             controller.press(button)
         else:
             controller.release(button)
+
+
+@dataclass
+class MouseScrollAction(Action):
+    dx: int = 0
+    dy: int = 0
+    x: Optional[int] = None
+    y: Optional[int] = None
+
+    def _execute_impl(self) -> None:  # pragma: no cover - depends on backend
+        if mouse is None:
+            logger.warning("Mouse backend is not available; skipping scroll")
+            return
+        controller = mouse.Controller()
+        if self.x is not None and self.y is not None:
+            controller.position = (self.x, self.y)
+        controller.scroll(self.dx, self.dy)
 
 
 @dataclass
@@ -236,6 +257,14 @@ class AutomationManager:
         return str(value)
 
     @classmethod
+    def _optional_int(cls, value: object) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return cls._to_int(value)
+
+    @classmethod
     def _convert_actions(cls, record: "Rekord") -> List[Action]:
         actions: List[Action] = []
         for item in record.actions:
@@ -262,6 +291,19 @@ class AutomationManager:
                         description=description,
                         button=cls._to_str(item.payload.get("button", "left"), "left"),
                         pressed=cls._to_bool(item.payload.get("pressed", True)),
+                        x=cls._optional_int(item.payload.get("x")),
+                        y=cls._optional_int(item.payload.get("y")),
+                    )
+                )
+            elif item.event_type == "mouse_scroll":
+                actions.append(
+                    MouseScrollAction(
+                        timestamp=item.timestamp,
+                        description=description,
+                        dx=cls._to_int(item.payload.get("dx", 0)),
+                        dy=cls._to_int(item.payload.get("dy", 0)),
+                        x=cls._optional_int(item.payload.get("x")),
+                        y=cls._optional_int(item.payload.get("y")),
                     )
                 )
             elif item.event_type == "keyboard":

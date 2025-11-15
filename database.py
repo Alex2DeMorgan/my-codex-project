@@ -35,12 +35,21 @@ class RekordStorage:
             connection = self._connect()
             try:
                 cursor = connection.execute(
-                    "SELECT id, name, created_at FROM records ORDER BY created_at ASC"
+                    """
+                    SELECT id, name, created_at, screen_width, screen_height
+                    FROM records
+                    ORDER BY created_at ASC
+                    """
                 )
                 records: List[Rekord] = []
                 for row in cursor.fetchall():
                     created_at = self._parse_datetime(row["created_at"])
-                    rekord = Rekord(name=row["name"], created_at=created_at)
+                    rekord = Rekord(
+                        name=row["name"],
+                        created_at=created_at,
+                        screen_width=self._safe_int(row["screen_width"]),
+                        screen_height=self._safe_int(row["screen_height"]),
+                    )
 
                     action_rows = connection.execute(
                         """
@@ -82,8 +91,16 @@ class RekordStorage:
                 for record in records:
                     created_at = record.created_at.isoformat()
                     cursor.execute(
-                        "INSERT INTO records (name, created_at) VALUES (?, ?)",
-                        (record.name, created_at),
+                        """
+                        INSERT INTO records (name, created_at, screen_width, screen_height)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            record.name,
+                            created_at,
+                            self._safe_int(getattr(record, "screen_width", None)),
+                            self._safe_int(getattr(record, "screen_height", None)),
+                        ),
                     )
                     record_id = cursor.lastrowid
                     if record_id is None:
@@ -146,7 +163,9 @@ class RekordStorage:
                     CREATE TABLE IF NOT EXISTS records (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         name TEXT NOT NULL,
-                        created_at TEXT NOT NULL
+                        created_at TEXT NOT NULL,
+                        screen_width INTEGER,
+                        screen_height INTEGER
                     );
 
                     CREATE TABLE IF NOT EXISTS actions (
@@ -159,6 +178,7 @@ class RekordStorage:
                     );
                     """
                 )
+                self._ensure_screen_columns(connection)
                 connection.commit()
             except sqlite3.DatabaseError:
                 connection.rollback()
@@ -175,6 +195,29 @@ class RekordStorage:
         except OSError:
             logger.exception("Failed to create Rekord storage directory: %s", parent)
 
+    def _ensure_screen_columns(self, connection: sqlite3.Connection) -> None:
+        """Make sure optional screen columns exist for legacy databases."""
+
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(records)").fetchall()
+            }
+        except sqlite3.DatabaseError:
+            logger.debug("Failed to inspect records table for screen columns", exc_info=True)
+            return
+
+        if "screen_width" not in columns:
+            try:
+                connection.execute("ALTER TABLE records ADD COLUMN screen_width INTEGER")
+            except sqlite3.DatabaseError:
+                logger.debug("Unable to add screen_width column", exc_info=True)
+        if "screen_height" not in columns:
+            try:
+                connection.execute("ALTER TABLE records ADD COLUMN screen_height INTEGER")
+            except sqlite3.DatabaseError:
+                logger.debug("Unable to add screen_height column", exc_info=True)
+
     @staticmethod
     def _parse_datetime(value: Optional[str]) -> datetime:
         if value:
@@ -183,6 +226,16 @@ class RekordStorage:
             except ValueError:
                 logger.debug("Invalid datetime stored in database: %s", value)
         return datetime.utcnow()
+
+    @staticmethod
+    def _safe_int(value: Optional[object]) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            ivalue = int(value)
+        except (TypeError, ValueError):
+            return None
+        return ivalue
 
     @staticmethod
     def _decode_payload(raw: Optional[str]) -> dict:

@@ -25,7 +25,7 @@ from datetime import datetime
 import logging
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import ttk
@@ -61,6 +61,8 @@ class Rekord:
     name: str
     created_at: datetime = field(default_factory=datetime.utcnow)
     actions: List[RekordAction] = field(default_factory=list)
+    screen_width: Optional[int] = None
+    screen_height: Optional[int] = None
 
     def add_action(self, event_type: str, payload: Dict[str, object]) -> None:
         action = RekordAction(timestamp=time.time(), event_type=event_type, payload=payload)
@@ -111,9 +113,15 @@ class Recorder:
         self._mouse_listener = None
         self._keyboard_listener = None
         self._clipboard_monitor: Optional[ClipboardMonitor] = None
+        self._screen_width: Optional[int] = None
+        self._screen_height: Optional[int] = None
 
     # pylint: disable=too-many-branches
-    def start(self, name: Optional[str] = None) -> Optional[Rekord]:
+    def start(
+        self,
+        name: Optional[str] = None,
+        screen_size: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Rekord]:
         if self.is_recording:
             logger.warning("Recording is already active")
             return self.current_rekord
@@ -123,7 +131,16 @@ class Recorder:
             return None
 
         name = name or datetime.utcnow().strftime("Запись %Y-%m-%d %H:%M:%S")
-        self.current_rekord = Rekord(name=name)
+        if screen_size is not None:
+            self._screen_width, self._screen_height = screen_size
+        else:
+            self._screen_width = None
+            self._screen_height = None
+        self.current_rekord = Rekord(
+            name=name,
+            screen_width=self._screen_width,
+            screen_height=self._screen_height,
+        )
         self.is_recording = True
         logger.info("Recording started: %s", self.current_rekord.name)
 
@@ -170,25 +187,26 @@ class Recorder:
 
         rekord = self.current_rekord
         self.current_rekord = None
+        self._screen_width = None
+        self._screen_height = None
         return rekord
 
     # Event handlers -----------------------------------------------------
     def _on_mouse_move(self, x: int, y: int) -> None:
         if self.current_rekord:
-            self.current_rekord.add_action("mouse_move", {"x": x, "y": y})
+            payload = self._with_coordinates({"x": x, "y": y})
+            self.current_rekord.add_action("mouse_move", payload)
 
     def _on_mouse_click(self, x: int, y: int, button, pressed: bool) -> None:  # pragma: no cover
         if self.current_rekord:
-            self.current_rekord.add_action(
-                "mouse_click",
-                {"x": x, "y": y, "button": str(button).split(".")[-1], "pressed": pressed},
-            )
+            payload = {"x": x, "y": y, "button": str(button).split(".")[-1], "pressed": pressed}
+            payload = self._with_coordinates(payload)
+            self.current_rekord.add_action("mouse_click", payload)
 
     def _on_mouse_scroll(self, x: int, y: int, dx: int, dy: int) -> None:  # pragma: no cover
         if self.current_rekord:
-            self.current_rekord.add_action(
-                "mouse_scroll", {"x": x, "y": y, "dx": dx, "dy": dy}
-            )
+            payload = self._with_coordinates({"x": x, "y": y, "dx": dx, "dy": dy})
+            self.current_rekord.add_action("mouse_scroll", payload)
 
     def _on_keyboard(self, key, pressed: bool) -> None:  # pragma: no cover
         if self.current_rekord:
@@ -203,6 +221,25 @@ class Recorder:
     def _on_clipboard(self, value: str) -> None:
         if self.current_rekord:
             self.current_rekord.add_action("clipboard", {"value": value})
+
+    def _with_coordinates(self, payload: Dict[str, object]) -> Dict[str, object]:
+        """Attach normalised coordinates when screen dimensions are known."""
+
+        x = payload.get("x")
+        y = payload.get("y")
+        if (
+            isinstance(x, (int, float))
+            and isinstance(self._screen_width, int)
+            and self._screen_width > 0
+        ):
+            payload["nx"] = float(x) / float(self._screen_width)
+        if (
+            isinstance(y, (int, float))
+            and isinstance(self._screen_height, int)
+            and self._screen_height > 0
+        ):
+            payload["ny"] = float(y) / float(self._screen_height)
+        return payload
 
 
 class RecorderTab(ttk.Frame):
@@ -247,7 +284,8 @@ class RecorderTab(ttk.Frame):
 
     def _start_recording(self) -> None:
         requested_name = self.name_var.get().strip() or None
-        rekord = self._recorder.start(name=requested_name)
+        screen_size = (self.winfo_screenwidth(), self.winfo_screenheight())
+        rekord = self._recorder.start(name=requested_name, screen_size=screen_size)
         if rekord is None:
             self.status_var.set("Невозможно начать запись: нет доступа к устройствам")
             return

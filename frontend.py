@@ -121,7 +121,7 @@ class AutomationApp(tk.Tk):
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self._setup_logging()
 
-        self.manager = AutomationManager()
+        self.manager = AutomationManager(screen_size_provider=self._get_screen_size)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True)
@@ -147,6 +147,9 @@ class AutomationApp(tk.Tk):
         logging.info("Получена запись: %s (%d действий)", rekord.name, len(rekord.actions))
         self.manager.add_record(rekord)
         self.automation_tab.refresh()
+
+    def _get_screen_size(self) -> tuple[int, int]:
+        return (self.winfo_screenwidth(), self.winfo_screenheight())
 
 
 def run_app() -> None:

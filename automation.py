@@ -19,7 +19,7 @@ from datetime import datetime
 import logging
 import threading
 import time
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from database import RekordStorage
 
@@ -33,6 +33,12 @@ try:  # pragma: no cover - optional dependency
     import pyperclip
 except Exception:  # pragma: no cover
     pyperclip = None
+
+
+try:  # pragma: no cover - Tk may be unavailable (e.g. headless envs)
+    import tkinter as tk
+except Exception:  # pragma: no cover
+    tk = None
 
 
 logger = logging.getLogger(__name__)
@@ -151,11 +157,16 @@ class ClipboardAction(Action):
 class AutomationManager:
     """Coordinate recorded actions and play them back when requested."""
 
-    def __init__(self, storage: Optional[RekordStorage] = None) -> None:
+    def __init__(
+        self,
+        storage: Optional[RekordStorage] = None,
+        screen_size_provider: Optional[Callable[[], Optional[Tuple[int, int]]]] = None,
+    ) -> None:
         self.storage = storage or RekordStorage()
         self._records: List["Rekord"] = list(self.storage.load())
         self._playback_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._screen_size_provider = screen_size_provider or self._fallback_screen_size_provider
         logger.info(
             "AutomationManager initialised with %d stored records", len(self._records)
         )
@@ -182,7 +193,8 @@ class AutomationManager:
             logger.warning("Playback already in progress; ignoring new request")
             return
 
-        actions = self._convert_actions(record)
+        screen_size = self._get_screen_size()
+        actions = self._convert_actions(record, screen_size)
         logger.info("Starting playback for '%s' (%d actions)", record.name, len(actions))
         self._stop_event.clear()
 
@@ -256,6 +268,24 @@ class AutomationManager:
             return default
         return str(value)
 
+    @staticmethod
+    def _to_float(value: object, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return float(int(value))
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return default
+            try:
+                return float(value)
+            except ValueError:
+                logger.debug("Failed to convert '%s' to float; using default %s", value, default)
+        return default
+
     @classmethod
     def _optional_int(cls, value: object) -> Optional[int]:
         if value is None:
@@ -264,9 +294,14 @@ class AutomationManager:
             return None
         return cls._to_int(value)
 
-    @classmethod
-    def _convert_actions(cls, record: "Rekord") -> List[Action]:
+    def _convert_actions(
+        self, record: "Rekord", screen_size: Optional[Tuple[int, int]]
+    ) -> List[Action]:
         actions: List[Action] = []
+        if screen_size is None:
+            current_width = current_height = None
+        else:
+            current_width, current_height = screen_size
         for item in record.actions:
             if isinstance(item, Action):
                 actions.append(item)
@@ -280,8 +315,12 @@ class AutomationManager:
                     MouseMoveAction(
                         timestamp=item.timestamp,
                         description=description,
-                        x=cls._to_int(item.payload.get("x")),
-                        y=cls._to_int(item.payload.get("y")),
+                        x=self._resolve_coordinate(
+                            record, item.payload, "x", current_width
+                        ),
+                        y=self._resolve_coordinate(
+                            record, item.payload, "y", current_height
+                        ),
                     )
                 )
             elif item.event_type == "mouse_click":
@@ -291,8 +330,12 @@ class AutomationManager:
                         description=description,
                         button=cls._to_str(item.payload.get("button", "left"), "left"),
                         pressed=cls._to_bool(item.payload.get("pressed", True)),
-                        x=cls._optional_int(item.payload.get("x")),
-                        y=cls._optional_int(item.payload.get("y")),
+                        x=self._resolve_coordinate(
+                            record, item.payload, "x", current_width, optional=True
+                        ),
+                        y=self._resolve_coordinate(
+                            record, item.payload, "y", current_height, optional=True
+                        ),
                     )
                 )
             elif item.event_type == "mouse_scroll":
@@ -300,10 +343,14 @@ class AutomationManager:
                     MouseScrollAction(
                         timestamp=item.timestamp,
                         description=description,
-                        dx=cls._to_int(item.payload.get("dx", 0)),
-                        dy=cls._to_int(item.payload.get("dy", 0)),
-                        x=cls._optional_int(item.payload.get("x")),
-                        y=cls._optional_int(item.payload.get("y")),
+                        dx=self._to_int(item.payload.get("dx", 0)),
+                        dy=self._to_int(item.payload.get("dy", 0)),
+                        x=self._resolve_coordinate(
+                            record, item.payload, "x", current_width, optional=True
+                        ),
+                        y=self._resolve_coordinate(
+                            record, item.payload, "y", current_height, optional=True
+                        ),
                     )
                 )
             elif item.event_type == "keyboard":
@@ -324,6 +371,76 @@ class AutomationManager:
                     )
                 )
         return actions
+
+    def _resolve_coordinate(
+        self,
+        record: "Rekord",
+        payload: dict,
+        axis: str,
+        current_size: Optional[int],
+        optional: bool = False,
+    ) -> Optional[int]:
+        key = axis
+        norm_key = f"n{axis}"
+        absolute_value = payload.get(key)
+        ratio_value = payload.get(norm_key)
+        ratio: Optional[float] = None
+
+        if ratio_value is not None:
+            ratio = self._to_float(ratio_value, default=-1.0)
+            if ratio < 0:
+                ratio = None
+        elif absolute_value is not None:
+            record_size = (
+                record.screen_width if axis == "x" else record.screen_height
+            )
+            if isinstance(record_size, (int, float)) and record_size:
+                ratio = float(self._to_int(absolute_value)) / float(record_size)
+
+        if ratio is not None and current_size:
+            resolved = int(round(ratio * current_size))
+            logger.debug(
+                "Resolved %s coordinate using ratio %.4f -> %s (current size %s)",
+                axis,
+                ratio,
+                resolved,
+                current_size,
+            )
+            return resolved
+
+        if absolute_value is not None:
+            resolved = self._to_int(absolute_value)
+            logger.debug("Resolved %s coordinate using absolute value %s", axis, resolved)
+            return resolved
+
+        return None if optional else 0
+
+    def _get_screen_size(self) -> Optional[Tuple[int, int]]:
+        try:
+            size = self._screen_size_provider()
+        except Exception:  # pragma: no cover - defensive logging
+            logger.debug("Screen size provider raised an exception", exc_info=True)
+            return None
+        if not size:
+            return None
+        width, height = size
+        if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+            return width, height
+        return None
+
+    @staticmethod
+    def _fallback_screen_size_provider() -> Optional[Tuple[int, int]]:
+        if tk is None:  # pragma: no cover - Tk not available
+            return None
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            size = (root.winfo_screenwidth(), root.winfo_screenheight())
+            root.destroy()
+            return size
+        except Exception:  # pragma: no cover - GUI-less envs
+            logger.debug("Failed to query fallback screen size via Tk", exc_info=True)
+            return None
 
 
 # Import placed at the bottom to avoid circular dependencies during runtime

@@ -20,8 +20,6 @@ The module exposes three main building blocks:
     provided by the caller.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging

@@ -1,7 +1,5 @@
 """Persistence helpers for storing and loading recorded automation sessions."""
 
-from __future__ import annotations
-
 import json
 import logging
 import sqlite3
@@ -80,15 +78,16 @@ class RekordStorage:
                 connection.execute("DELETE FROM actions")
                 connection.execute("DELETE FROM records")
 
+                cursor = connection.cursor()
                 for record in records:
                     created_at = record.created_at.isoformat()
-                    cursor = connection.execute(
+                    cursor.execute(
                         "INSERT INTO records (name, created_at) VALUES (?, ?)",
                         (record.name, created_at),
                     )
                     record_id = cursor.lastrowid
                     if record_id is None:
-                        record_id = connection.execute(
+                        record_id = cursor.execute(
                             "SELECT last_insert_rowid()"
                         ).fetchone()[0]
 
@@ -97,7 +96,7 @@ class RekordStorage:
                             getattr(action, "payload", {}),
                             ensure_ascii=False,
                         )
-                        connection.execute(
+                        cursor.execute(
                             """
                             INSERT INTO actions (record_id, timestamp, event_type, payload)
                             VALUES (?, ?, ?, ?)

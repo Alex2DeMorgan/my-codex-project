@@ -1,7 +1,5 @@
 """Graphical interface for the desktop task automation application."""
 
-from __future__ import annotations
-
 import logging
 import queue
 from typing import Optional

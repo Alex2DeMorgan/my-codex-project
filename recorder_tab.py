@@ -30,6 +30,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
 
+from screenutils import detect_screen_size
+
 try:  # pragma: no cover - optional dependency
     from pynput import keyboard, mouse
 except Exception:  # pragma: no cover
@@ -131,6 +133,8 @@ class Recorder:
             return None
 
         name = name or datetime.utcnow().strftime("Запись %Y-%m-%d %H:%M:%S")
+        if screen_size is None:
+            screen_size = detect_screen_size()
         if screen_size is not None:
             self._screen_width, self._screen_height = screen_size
         else:
@@ -227,6 +231,12 @@ class Recorder:
 
         x = payload.get("x")
         y = payload.get("y")
+        if isinstance(x, (int, float)):
+            x = int(round(float(x)))
+            payload["x"] = x
+        if isinstance(y, (int, float)):
+            y = int(round(float(y)))
+            payload["y"] = y
         if (
             isinstance(x, (int, float))
             and isinstance(self._screen_width, int)
@@ -284,7 +294,9 @@ class RecorderTab(ttk.Frame):
 
     def _start_recording(self) -> None:
         requested_name = self.name_var.get().strip() or None
-        screen_size = (self.winfo_screenwidth(), self.winfo_screenheight())
+        screen_size = detect_screen_size()
+        if screen_size is None:
+            screen_size = (self.winfo_screenwidth(), self.winfo_screenheight())
         rekord = self._recorder.start(name=requested_name, screen_size=screen_size)
         if rekord is None:
             self.status_var.set("Невозможно начать запись: нет доступа к устройствам")

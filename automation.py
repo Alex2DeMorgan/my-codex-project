@@ -22,6 +22,7 @@ import time
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from database import RekordStorage
+from screenutils import detect_screen_size
 
 try:  # pragma: no cover - the optional dependency might not be installed
     from pynput import keyboard, mouse
@@ -33,12 +34,6 @@ try:  # pragma: no cover - optional dependency
     import pyperclip
 except Exception:  # pragma: no cover
     pyperclip = None
-
-
-try:  # pragma: no cover - Tk may be unavailable (e.g. headless envs)
-    import tkinter as tk
-except Exception:  # pragma: no cover
-    tk = None
 
 
 logger = logging.getLogger(__name__)
@@ -166,7 +161,7 @@ class AutomationManager:
         self._records: List["Rekord"] = list(self.storage.load())
         self._playback_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._screen_size_provider = screen_size_provider or self._fallback_screen_size_provider
+        self._screen_size_provider = screen_size_provider or detect_screen_size
         logger.info(
             "AutomationManager initialised with %d stored records", len(self._records)
         )
@@ -429,21 +424,6 @@ class AutomationManager:
         if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
             return width, height
         return None
-
-    @staticmethod
-    def _fallback_screen_size_provider() -> Optional[Tuple[int, int]]:
-        if tk is None:  # pragma: no cover - Tk not available
-            return None
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            size = (root.winfo_screenwidth(), root.winfo_screenheight())
-            root.destroy()
-            return size
-        except Exception:  # pragma: no cover - GUI-less envs
-            logger.debug("Failed to query fallback screen size via Tk", exc_info=True)
-            return None
-
 
 # Import placed at the bottom to avoid circular dependencies during runtime
 from recorder_tab import Rekord, RekordAction  # noqa: E402  # isort:skip

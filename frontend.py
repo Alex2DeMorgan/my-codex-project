@@ -9,6 +9,7 @@ from tkinter import ttk
 
 from automation import AutomationManager
 from recorder_tab import Rekord, RecorderTab
+from screenutils import detect_screen_size
 
 
 class TkQueueHandler(logging.Handler):
@@ -148,7 +149,10 @@ class AutomationApp(tk.Tk):
         self.manager.add_record(rekord)
         self.automation_tab.refresh()
 
-    def _get_screen_size(self) -> tuple[int, int]:
+    def _get_screen_size(self) -> Optional[tuple[int, int]]:
+        size = detect_screen_size()
+        if size:
+            return size
         return (self.winfo_screenwidth(), self.winfo_screenheight())
 
 

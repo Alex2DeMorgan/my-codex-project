@@ -47,9 +47,13 @@ class RekordStorage:
                     rekord = Rekord(
                         name=row["name"],
                         created_at=created_at,
-                        screen_width=self._safe_int(row["screen_width"]),
-                        screen_height=self._safe_int(row["screen_height"]),
                     )
+                    width = self._safe_int(row["screen_width"])
+                    height = self._safe_int(row["screen_height"])
+                    if hasattr(rekord, "screen_width"):
+                        rekord.screen_width = width
+                    if hasattr(rekord, "screen_height"):
+                        rekord.screen_height = height
 
                     action_rows = connection.execute(
                         """

@@ -328,8 +328,8 @@ class AutomationManager:
                     MouseClickAction(
                         timestamp=item.timestamp,
                         description=description,
-                        button=cls._to_str(item.payload.get("button", "left"), "left"),
-                        pressed=cls._to_bool(item.payload.get("pressed", True)),
+                        button=self._to_str(item.payload.get("button", "left"), "left"),
+                        pressed=self._to_bool(item.payload.get("pressed", True)),
                         x=self._resolve_coordinate(
                             record, item.payload, "x", current_width, optional=True
                         ),
@@ -358,8 +358,8 @@ class AutomationManager:
                     KeyboardAction(
                         timestamp=item.timestamp,
                         description=description,
-                        key=cls._to_str(item.payload.get("key")),
-                        pressed=cls._to_bool(item.payload.get("pressed", True)),
+                        key=self._to_str(item.payload.get("key")),
+                        pressed=self._to_bool(item.payload.get("pressed", True)),
                     )
                 )
             elif item.event_type == "clipboard":
@@ -391,8 +391,10 @@ class AutomationManager:
             if ratio < 0:
                 ratio = None
         elif absolute_value is not None:
-            record_size = (
-                record.screen_width if axis == "x" else record.screen_height
+            record_size = getattr(
+                record,
+                "screen_width" if axis == "x" else "screen_height",
+                None,
             )
             if isinstance(record_size, (int, float)) and record_size:
                 ratio = float(self._to_int(absolute_value)) / float(record_size)
